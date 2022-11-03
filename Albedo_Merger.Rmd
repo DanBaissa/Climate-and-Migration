@@ -1,0 +1,201 @@
+---
+title: "Albedo Merger"
+author: "Daniel K Baissa"
+date: "2022-11-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(raster)
+library(tidyverse)
+library(sf)
+```
+
+```{r}
+Syria <- st_read("Shapefiles/syr_admbnda_adm0_uncs_unocha_20201217.shp")
+e <- as(extent(Syria), 'SpatialPolygons')
+crs(e) <- "+proj=longlat +datum=WGS84 +no_defs"
+```
+
+
+
+
+```{r}
+filenames <- list.files("MODIS/MCD43D58.061", full.names=TRUE)
+```
+
+```{r}
+list.files(filenames[1:31], full.names=TRUE)
+s <- stack(list.files(filenames[1:31], full.names=TRUE))
+```
+
+```{r}
+
+extent(s) <- c(-180,180,-90,90)
+s <- crop(s, e)
+
+r <- mean(s)
+r2 <- as.data.frame(r, xy=T) %>%
+  drop_na()
+
+ggplot() +
+  geom_sf(data = Syria) +
+    geom_raster(data = r2,  aes(x = x, y = y, fill = layer), alpha = .8) +
+  scale_fill_viridis_c(option = "H") +
+
+  # geom_point(data = GTD, aes(y = latitude, x = longitude), color = 'red') +
+
+  theme_classic()
+```
+
+```{r}
+
+
+df.2008 <- grep("MODIS/MCD43D58.061/2008", filenames, value = TRUE)
+
+s <- stack(list.files(grep(paste0("2008",".0", 1), df.2008, value = TRUE), full.names=TRUE))
+
+extent(s) <- c(-180,180,-90,90)
+s <- crop(s, e)
+r <- mean(s)
+```
+
+```{r}
+r2 <- as.data.frame(r, xy=T) %>%
+  drop_na()
+
+ggplot() +
+  geom_sf(data = Syria) +
+    geom_raster(data = r2,  aes(x = x, y = y, fill = layer), alpha = .8) +
+  scale_fill_viridis_c(option = "H") +
+
+  # geom_point(data = GTD, aes(y = latitude, x = longitude), color = 'red') +
+
+  theme_classic()
+```
+
+## Now let's merge them
+
+## Let's start by making a grid
+
+```{r}
+ppside <- 2
+h <- ceiling(ncol(r)/ppside)
+v <- ceiling(nrow(r)/ppside)
+agg <- aggregate(r,fact=c(h,v))
+agg[]    <- 1:ncell(agg)
+agg_poly <- rasterToPolygons(agg)
+plot(agg_poly)
+```
+
+```{r}
+    r.vals <- raster::extract(r, agg_poly)
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    agg_poly@data <- data.frame(agg_poly@data, NL_month_1=unlist(r.mean))
+    
+    agg_poly = st_as_sf(agg_poly)     
+
+```
+
+```{r}
+ggplot()+
+  geom_sf(data = agg_poly, mapping =  aes(color = NULL, fill = NL_month_1))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+```
+
+## This appears to work
+
+Now let's automate this
+
+```{r}
+years <- c(2008:2011)
+
+df.gen <- grep(paste0("MODIS/MCD43D58.061/", years[1]), filenames, value = TRUE)
+s <- stack(list.files(grep(paste0(years[1],".0", 1), df.gen, value = TRUE), full.names=TRUE))
+
+extent(s) <- c(-180,180,-90,90)
+s <- crop(s, e)
+r <- mean(s)
+plot(r, col = (terrain.colors(10)))
+```
+
+```{r}
+ppside <- 100
+h <- ceiling(ncol(r)/ppside)
+v <- ceiling(nrow(r)/ppside)
+agg <- aggregate(r,fact=c(h,v))
+agg[]    <- 1:ncell(agg)
+agg_poly <- rasterToPolygons(agg)
+
+plot(agg_poly)
+```
+
+
+```{r}
+years <- c(2008:2010)
+
+
+for (j in 1:length(years)) {
+
+    for (i in 1:12) {
+
+df.gen <- grep(paste0("MODIS/MCD43D58.061/", years[j]), filenames, value = TRUE)
+
+
+  if(i < 10){
+  s <- stack(list.files(grep(paste0(years[j],".0", i), df.gen, value = TRUE), full.names=TRUE))
+  } 
+  if(i > 10){
+  s <- stack(list.files(grep(paste0(years[j],".", i), df.gen, value = TRUE), full.names=TRUE))
+  }  
+
+extent(s) <- c(-180,180,-90,90)
+s <- crop(s, e)
+r <- mean(s)
+      r.vals <- raster::extract(r, agg_poly)
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    agg_poly@data <- cbind(agg_poly@data, unlist(r.mean))
+    
+    colnames(agg_poly@data)[length(colnames(agg_poly@data))] <- paste0(month.name[as.numeric(i)], "_", years[j])
+
+    print(paste(month.name[as.numeric(i)], years[j]))
+  }
+} 
+
+agg_poly = st_as_sf(agg_poly)
+
+st_crs(agg_poly) = st_crs(Syria)
+
+df <- st_intersection(agg_poly, Syria)
+
+
+try(st_delete("syria_ALBEDO/syria_ALBEDO.shp"))
+st_write(df, "syria_ALBEDO/syria_ALBEDO.shp", dataset_options = "OVERWRITE=T")
+```
+
+
+```{r}
+df %>% 
+  mutate(change = December_2010 - January_2008 ) %>% 
+  ggplot()+
+  geom_sf( mapping =  aes(color = NULL, fill = December_2010))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+```
+
+```{r}
+df2 <- df %>% 
+  pivot_longer(-c(layer,Shape_Leng,Shape_Area, ADM0_EN, ADM0_AR, ADM0_PCODE, ADM0_REF,ADM0ALT1EN , ADM0ALT2EN, ADM0ALT1AR, ADM0ALT2AR, date, validOn,  validTo, geometry)
+                  , names_to = "Time", values_to = "Albedo") %>% 
+  group_by(layer) %>% 
+  mutate(timt = 1:n())
+```
+
+
