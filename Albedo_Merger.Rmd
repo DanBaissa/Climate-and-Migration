@@ -191,6 +191,31 @@ df %>%
 ```
 
 ```{r}
+filenames <- list.files("Monthly_DMSP-OLS", pattern=".glare2.line_screened.avg_vis.tif", full.names=TRUE)
+for (i in 1:length(filenames)) {
+  # for (i in 2:3) {
+
+  r <- raster(filenames[i])
+  r <- crop(r, e)
+      r.vals <- raster::extract(r, df)
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    df <- cbind(df, i = unlist(r.mean))
+    
+    
+    print(paste(i, "of", length(filenames)))
+  }
+agg_poly = st_as_sf(agg_poly)     
+df <- st_intersection(agg_poly, Syria)
+
+try(st_delete("syria.shp"))
+st_write(df, "syria.shp", dataset_options = "OVERWRITE=T")
+```
+
+
+
+```{r}
 df2 <- df %>% 
   pivot_longer(-c(layer,Shape_Leng,Shape_Area, ADM0_EN, ADM0_AR, ADM0_PCODE, ADM0_REF,ADM0ALT1EN , ADM0ALT2EN, ADM0ALT1AR, ADM0ALT2AR, date, validOn,  validTo, geometry)
                   , names_to = "Time", values_to = "Albedo") %>% 
