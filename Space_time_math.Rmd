@@ -1,0 +1,112 @@
+---
+title: "Spatial and Temperal Math"
+author: "Daniel K Baissa"
+date: "2022-11-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(raster)
+library(tidyverse)
+library(sf)
+```
+
+
+```{r}
+Syria <- st_read("merged_albedo_NL_Urban/syria_Merged_50.shp")
+st_crs(Syria) <- "+proj=longlat +datum=WGS84 +no_defs"
+
+```
+
+
+```{r}
+Syria %>% 
+ggplot() +
+  # geom_sf(data = df, aes(fill= Urban)) +
+  # scale_fill_viridis_c(option = "H") +
+  geom_sf(aes(fill= NL )) +
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+
+Syria %>% 
+  ggplot() +  
+  geom_sf(aes(fill= Albedo)) +  
+  scale_fill_viridis_c(option = "H") +  
+  theme_classic()
+```
+
+```{r}
+Syria2 <- Syria %>% 
+  drop_na()
+```
+
+
+```{r}
+m1.lm <- lm(NL~Urban*Drought+ Albedo + Month + as.factor(Year), data = Syria2)
+m1.lm <- lm(NL~Urban + Drought * Albedo + Month + as.factor(Year), data = Syria2)
+
+# m1.lm <- lm(NL~Urban*Drought+ Albedo + Month + as.factor(Year) + as.factor(G_BRDF_), data = Syria)
+
+summary(m1.lm)
+
+# test <- lm(NL~Urban*Albedo*Drought, data = Syria)
+# summary(test)
+# sjPlot::plot_model(test, type = "pred", terms =c("Urban", "Drought"))
+```
+
+
+```{r}
+Syria2 <- Syria2 %>%
+  drop_na() %>% 
+  mutate(olsresid = resid(m1.lm))
+```
+
+```{r}
+library(spdep)
+library(spatialreg)
+
+Syria3  <- Syria2 %>%
+  sample_n(1000, replace = T)
+
+sample.m1.lm <- lm(NL~Urban + Drought * Albedo + Month + as.factor(Year), data = Syria3)
+
+Syria3 <- Syria3 %>%
+  mutate(olsresid = resid(sample.m1.lm))
+
+summary(m1.lm)
+summary(sample.m1.lm)
+
+
+
+seab<-poly2nb(Syria3, queen=T)
+seaw<-nb2listw(seab, style="W", zero.policy = TRUE)
+
+# test <- lm(NL~Urban*Albedo, data = df4)
+
+
+
+fit.err<-errorsarlm(NL~Urban + Drought * Albedo + Month + as.factor(Year), data = Syria3, listw = seaw) 
+summary(fit.err)
+```
+
+
+```{r}
+
+m2.lm <- lm(NL~Urban*Drought+ Albedo + Month + as.factor(Year) + as.factor(G_BRDF_), data = Syria2)
+
+summary(m2.lm)
+
+m2.lm$coefficients["Urban:Drought"]
+
+
+```
+
+```{r}
+m1.rlm <- MASS::rlm(NL~Urban*Drought+ Albedo + Month, data = Syria)
+
+summary(m1.rlm)
+
+```
+

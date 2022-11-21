@@ -1,0 +1,438 @@
+---
+title: "Albedo Merger"
+author: "Daniel K Baissa"
+date: "2022-11-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(raster)
+library(tidyverse)
+library(sf)
+```
+
+```{r}
+Syria <- st_read("Shapefiles/syr_admbnda_adm0_uncs_unocha_20201217.shp")
+e <- as(extent(Syria), 'SpatialPolygons')
+crs(e) <- "+proj=longlat +datum=WGS84 +no_defs"
+```
+
+
+
+
+```{r}
+setwd("D:/")
+
+filenames <- list.files("MODIS/MCD43D58.061", full.names=TRUE)
+
+r <- raster(list.files(filenames[1], full.names=TRUE))
+
+crs(r) = "+proj=longlat +datum=WGS84 +no_defs"
+st_crs(Syria) = "+proj=longlat +datum=WGS84 +no_defs"
+
+extent(r) <- c(-180,180,-90,90)
+r <- crop(r, Syria)
+
+```
+
+
+
+## Now let's merge them
+
+## Let's start by making a grid
+
+
+Now let's automate this
+
+
+
+
+```{r}
+ppside <- 50
+h <- ceiling(ncol(r)/ppside)
+v <- ceiling(nrow(r)/ppside)
+agg <- aggregate(r,fact=c(h,v))
+agg[]    <- 1:ncell(agg)
+agg_poly <- rasterToPolygons(agg)
+
+
+plot(agg_poly)
+```
+
+
+```{r}
+setwd("D:/")
+
+years <- c(2004:2010)
+
+
+for (j in 1:length(years)) {
+# for (j in 1:1) {
+
+
+    for (i in 1:12) {
+          # for (i in 1:1) {
+
+
+df.gen <- grep(paste0("MODIS/MCD43D58.061/", years[j]), filenames, value = TRUE)
+
+
+  if(i < 10){
+  s <- stack(list.files(grep(paste0(years[j],".0", i), df.gen, value = TRUE), full.names=TRUE))
+  } 
+  if(i > 10){
+  s <- stack(list.files(grep(paste0(years[j],".", i), df.gen, value = TRUE), full.names=TRUE))
+  }  
+
+extent(s) <- c(-180,180,-90,90)
+s <- crop(s, e)
+r <- mean(s)
+      r.vals <- raster::extract(r, agg_poly)
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    agg_poly@data <- cbind(agg_poly@data, unlist(r.mean))
+    
+    colnames(agg_poly@data)[length(colnames(agg_poly@data))] <- paste0(month.name[as.numeric(i)], "_", years[j])
+
+    print(paste(month.name[as.numeric(i)], years[j]))
+  }
+} 
+
+# agg_poly = st_as_sf(agg_poly)
+# 
+# st_crs(agg_poly) = st_crs(Syria)
+# 
+# df <- st_intersection(agg_poly, Syria)
+
+
+# try(st_delete("syria_ALBEDO/syria_ALBEDO.shp"))
+# st_write(df, "syria_ALBEDO/syria_ALBEDO.shp", dataset_options = "OVERWRITE=T")
+```
+
+```{r}
+df$October_2010
+```
+
+
+```{r}
+na.omit(agg_poly@data)
+```
+
+
+
+```{r}
+# df %>% 
+#   mutate(change = December_2010 - January_2008 ) %>% 
+#   ggplot()+
+#   geom_sf( mapping =  aes(color = NULL, fill = December_2010))+
+#   scale_fill_viridis_c(option = "H") +
+#   theme_classic()
+```
+
+```{r}
+setwd("D:/")
+
+filenames <- list.files("Monthly_DMSP-OLS", pattern="line_screened.avg_vis.tif", full.names=TRUE)
+for (i in 1:length(filenames)) {
+  # for (i in 1:1) {
+
+  r <- raster(filenames[i])
+  r <- crop(r, e)
+      r.vals <- raster::extract(r, agg_poly)
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    agg_poly@data <- cbind(agg_poly@data, unlist(r.mean))
+
+    colnames(agg_poly@data)[length(colnames(agg_poly@data))] <- paste0(colnames(agg_poly@data)[1+i],"_NL")
+
+    
+    print(colnames(agg_poly@data)[length(colnames(agg_poly@data))])
+  }
+
+
+# agg_poly@data <- agg_poly@data %>%
+#   select(!January_2008)
+```
+
+
+
+## Now add in Cities
+
+
+```{r}
+e <- as(extent(Syria), 'SpatialPolygons')
+
+crs(e) <- "+proj=longlat +datum=WGS84 +no_defs"
+
+r <- crop(r, e)
+
+Cities <- read_csv("Syria_Albedo_Nightlights/Syria_Data/World_cities.csv")
+
+Cities <- Cities |> 
+  filter(country == "Syria")
+
+Cities_sf = st_as_sf(Cities, coords = c("lng", "lat"))
+
+
+Cities_sf_km = st_buffer(Cities_sf, .1)
+
+st_crs(Cities_sf_km) = "+proj=longlat +datum=WGS84 +no_defs"
+
+
+Urban <- r/r
+Urban = mask(Urban, Cities_sf_km)
+
+
+Rural <-r/r
+
+Urban_rural <- sum(Rural, -1*Urban, na.rm = T)
+Urban_rural = mask(Urban_rural, Syria)
+Urban_rural <- Urban_rural*-1 +1
+plot(Urban_rural)
+
+```
+
+```{r}
+r.vals <- raster::extract(Urban_rural, agg_poly)
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    agg_poly@data <- cbind(agg_poly@data, Urban = unlist(r.mean))  
+    
+df = st_as_sf(agg_poly)     
+df <- st_intersection(df, Syria)
+
+```
+
+```{r}
+df %>%
+  ggplot()+
+  geom_sf( mapping =  aes(color = NULL, fill = February_2008))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+
+df %>%
+  ggplot()+
+  # geom_sf( mapping =  aes(color = NULL, fill = log(Global_BRDF_Albedo_WSA_Band7_NL)))+
+  geom_sf( mapping =  aes(color = NULL, fill = October_2008_NL))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+
+df %>%
+  ggplot()+
+  # geom_sf( mapping =  aes(color = NULL, fill = log(Global_BRDF_Albedo_WSA_Band7_NL)))+
+  geom_sf( mapping =  aes(color = NULL, fill = November_2008_NL))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+
+df %>%
+  ggplot()+
+  # geom_sf( mapping =  aes(color = NULL, fill = log(Global_BRDF_Albedo_WSA_Band7_NL)))+
+  geom_sf( mapping =  aes(color = NULL, fill = Urban))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+```
+
+```{r}
+# df <- df %>% 
+#   # mutate_at(contains(month.name[1:12]), ~na_if(., 0))
+#   mutate(across(contains(month.name[1:12]),~na_if(., 0)))
+```
+
+
+# ```{r}
+# try(st_delete("shapefile_out.shp"))
+# # st_write(st_as_sf(df), "Syria_NL_Albedo_Urban7.", layer_options = c("OVERWRITE=true", "LAUNDER=true"))
+# st_write(df, "shapefile_out.shp", driver="ESRI Shapefile")  # create to a shapefile 
+# 
+# # tf <- tempfile()
+# # rgdal::writeOGR(as(df, 'Spatial'), tf, "Syria_test", driver="ESRI Shapefile", layer_options="LAUNDER=NO")
+# 
+# ```
+
+
+```{r}
+# df2 <- df %>% 
+#   pivot_longer(-c(layer,Shape_Leng,Shape_Area, ADM0_EN, ADM0_AR, ADM0_PCODE, ADM0_REF,ADM0ALT1EN , ADM0ALT2EN, ADM0ALT1AR, ADM0ALT2AR, date, validOn,  validTo, geometry)
+#                   , names_to = "Time", values_to = "Albedo") %>% 
+#   group_by(layer) %>% 
+#   mutate(timt = 1:n())
+```
+
+```{r}
+df <- df %>% 
+  mutate(Urban_C = Urban) %>% 
+  mutate(Urban = ifelse(Urban > .5, 1,0))
+library(stringr)
+df_nl <- df %>% 
+  select(c(contains("_NL"), Global_BRDF_Albedo_WSA_Band7 )) %>% 
+  pivot_longer(-c(Global_BRDF_Albedo_WSA_Band7, geometry), names_to = "Time", values_to = "NL") 
+
+
+df_nl$Time <- str_remove_all(df_nl$Time, "_NL")
+
+df_nl<- as.data.frame(df_nl)
+
+df_al <- df %>% 
+  select(Global_BRDF_Albedo_WSA_Band7, contains(month.name[1:12])) %>% 
+  select(!contains("_NL")) %>% 
+  pivot_longer(-c(Global_BRDF_Albedo_WSA_Band7, geometry), names_to = "Time", values_to = "Albedo") 
+
+df_al <- as.data.frame(df_al)
+
+df_urban <- df %>% 
+  select(Global_BRDF_Albedo_WSA_Band7, Urban)
+
+df_urban <- as.data.frame(df_urban)
+
+df2 <- df %>% 
+  select(Global_BRDF_Albedo_WSA_Band7, geometry, Shape_Leng, Shape_Area, ADM0_EN)
+
+df3 <- merge(df2, df_urban)
+df4 <- merge(df3, df_al)  
+df4 <- merge(df4, df_nl)  
+
+df4 <- df4 %>% 
+  mutate(Year = sub(".*_", "", Time)) %>% 
+  mutate(Month = sub("_.*", "", Time))
+
+
+# df4 <- na.omit(df4)
+
+df4 <- df4 %>% 
+  mutate(Year = as.numeric(Year)) %>% 
+  mutate(Drought = ifelse(Year > 2005, 1, 0)) %>% 
+  mutate(NL = ifelse(NL == 0, NA, NL))
+
+
+try(st_delete("Syria_Merged_50.shp"))
+
+st_write(df4, "Syria_Merged_50.shp", driver="ESRI Shapefile")  # create to a shapefile 
+
+
+```
+
+```{r}
+Syria2 <- st_read("Syria_Merged_50.shp")
+
+```
+
+
+```{r}
+
+# test <- lm(NL~Albedo*Drought + Urban, data = df4)
+# test <- lm(NL~Urban*Drought, data = df4)
+
+test2 <- MASS::rlm(NL~Urban*Albedo*Drought, data = df4, method = "MM")
+summary(test2)
+```
+
+
+
+
+
+```{r}
+test <- lm(NL~Urban*Albedo*Drought, data = df4)
+summary(test)
+sjPlot::plot_model(test, type = "pred", terms =c("Urban", "Drought"))
+
+```
+
+```{r}
+test <- lm(NL~Urban*Drought+Albedo, data = df4)
+summary(test)
+sjPlot::plot_model(test, type = "pred", terms =c("Urban", "Drought"))
+```
+
+```{r}
+test2 <- MASS::rlm(NL~Urban*Drought + Albedo, data = df4, method = "MM", psi = psi.bisquare)
+summary(test2)
+test3 <- MASS::rlm(NL~Urban*Drought + Albedo, data = df4, method = "MM", psi = psi.huber)
+summary(test3)
+
+test4 <- MASS::rlm(NL~Urban*Drought + Albedo, data = df4, method = "M")
+summary(test4)
+sjPlot::plot_model(test4, type = "pred", terms =c("Urban", "Drought"))
+```
+
+
+
+```{r}
+ggplot() + 
+  geom_histogram(mapping = aes(x=resid(test))) +
+  xlab("OLS residuals")
+
+ggplot() + 
+  geom_histogram(mapping = aes(x=resid(test2))) +
+  xlab("OLS residuals")
+ggplot() + 
+  geom_histogram(mapping = aes(x=resid(test4))) +
+  xlab("OLS residuals")
+```
+
+```{r}
+
+ggplot() + 
+  geom_point(mapping = aes(x = fitted(test), y=resid(test))) +
+  xlab("OLS residuals")
+
+ggplot() + 
+  geom_point(mapping = aes(x = fitted(test2), y=resid(test2))) +
+  xlab("MM residuals")
+
+ggplot() + 
+  geom_point(mapping = aes(x = fitted(test4), y=resid(test4))) +
+  xlab("M residuals")
+```
+
+
+```{r}
+df4 <- df4 %>%
+  drop_na() %>% 
+  mutate(olsresid = resid(test))
+```
+
+```{r}
+library(spdep)
+library(spatialreg)
+
+df5 <- df4 %>% 
+  sample_n(1000, replace = T)
+
+seab<-poly2nb(df5, queen=T)
+seaw<-nb2listw(seab, style="W", zero.policy = TRUE)
+
+# test <- lm(NL~Urban*Albedo, data = df4)
+
+
+
+fit.err<-errorsarlm(NL~Urban*Drought+Albedo, data = df5, listw = seaw) 
+summary(fit.err)
+```
+
+```{r}
+mm.est <-  MASS::glm.nb(NL ~ Urban*Albedo, data = df4)
+
+mm.est
+```
+
+```{r}
+m.est <- MASS::rlm(NL ~ Urban*Albedo, data = df4, method = "M")
+mm.est <- MASS::rlm(NL ~ Urban*Albedo, data = df4, method = "MM")
+summary(m.est)
+summary(mm.est)
+summary(test)
+```
+
+```{r}
+sjPlot::plot_model(m.est, type = "pred", terms =c("Albedo", "Urban"))
+
+```
+
+
+
+

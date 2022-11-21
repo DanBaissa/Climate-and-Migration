@@ -1,0 +1,323 @@
+---
+title: "Jupiter"
+author: "Daniel K Baissa"
+date: "2022-11-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(raster)
+```
+
+```{r}
+
+
+filenames <- list.files("Jupiter", full.names=TRUE)
+
+r = raster(filenames[1])
+
+```
+
+
+```{r}
+# plot(r)
+
+r.int <- as.data.frame(r, xy=T) %>%
+  drop_na()
+
+ggplot() +
+    geom_raster(data = r.int,  aes(x = x, y = y, fill = layer), alpha = .8) +
+  scale_fill_viridis_c(option = "H") +
+
+  # geom_point(data = GTD, aes(y = latitude, x = longitude), color = 'red') +
+
+  theme_classic()
+
+
+```
+
+```{r}
+
+s1000 <- stack(filenames[1:1000])
+s10 <- stack(filenames[1:10])
+s100 <- stack(filenames[1:100])
+
+rs4 <- s10[[seq(1,10,by=3)]]
+rs34 <- s100[[seq(1,100,by=3)]]
+rs334 <- s1000[[seq(1,1000,by=3)]]
+
+```
+
+```{r}
+
+plot(r)
+
+plot(mean(rs4))
+plot(mean(rs34))
+plot(mean(rs334))
+
+plot(log(mean(rs4)))
+plot(log(mean(rs34)))
+plot(log(mean(rs334)))
+
+```
+
+```{r}
+
+s1 <- stack(filenames[1:1])
+
+```
+
+
+```{r}
+s <- stack(filenames[1:300])
+
+
+red <- mean(s[[seq(1,300,by=3)]])
+green <- mean(s[[seq(2,300,by=3)]])
+blue <- mean(s[[seq(3,300,by=3)]]) 
+mean_s <- stack(red, green,blue)
+
+```
+
+```{r}
+# plot(log(red))
+# plot(log(green))
+# plot(log(blue))
+
+lr.post <- log(red)
+lr.post <- as.data.frame(lr.post, xy=T) %>%
+  drop_na()
+
+ggplot() +
+    geom_raster(data = lr.post,  aes(x = x, y = y, fill = layer), alpha = .8) +
+  scale_fill_viridis_c(option = "H") +
+
+  # geom_point(data = GTD, aes(y = latitude, x = longitude), color = 'red') +
+
+  theme_classic()
+
+
+```
+
+```{r}
+
+lr.post |> 
+  mutate(layer = ifelse(layer < 3, 0, layer)) |> 
+ggplot() +
+    geom_raster(aes(x = x, y = y, fill = layer), alpha = .8) +
+  scale_fill_viridis_c(option = "H") +
+
+  # geom_point(data = GTD, aes(y = latitude, x = longitude), color = 'red') +
+
+  theme_classic()
+
+```
+
+```{r}
+
+library(imager)
+layout(t(1:2))
+plot(boats,main="Original")
+imsharpen(boats,150)  %>% plot(main="Sharpened")
+```
+
+
+```{r}
+plotRGB(s1,
+        r = 1, g = 2, b = 3)
+
+plotRGB(mean_s,
+        r = 1, g = 2, b = 3)
+
+library(geostatsp)
+mgvf.img <- as.im(mgvf.2001.africa)
+
+imsharpen(mean_s,150)  %>% plot(main="Sharpened")
+
+
+```
+
+
+```{r}
+# ppside <- 50
+ppside <- 100
+
+h <- ceiling(ncol(r)/ppside)
+v <- ceiling(nrow(r)/ppside)
+agg <- aggregate(r,fact=c(h,v))
+agg[]    <- 1:ncell(agg)
+agg_poly <- rasterToPolygons(agg)
+
+
+plot(agg_poly)
+```
+
+
+```{r}
+    r.vals <- raster::extract(r, agg_poly)
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    agg_poly@data <- data.frame(agg_poly@data, red_col=unlist(r.mean))
+    library(sf)
+
+    df = st_as_sf(agg_poly) 
+```
+
+
+```{r}
+
+r.int <- as.data.frame(r, xy=T) %>%
+  drop_na()
+
+ggplot() +
+    geom_raster(data = r.int,  aes(x = x, y = y, fill = layer)) +
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+
+ggplot()+
+  geom_sf(data = df, mapping =  aes(color = NULL, fill = red_col))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+
+
+```
+
+## With logs
+
+```{r}
+ggplot() +
+    geom_raster(data = r.int,  aes(x = x, y = y, fill = log(layer))) +
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+
+ggplot()+
+  geom_sf(data = df, mapping =  aes(color = NULL, fill = log(red_col)), alpha = 1)+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+```
+
+## Now let's use the stacked data and use this "mean filter"
+
+```{r}
+mrs4 <- mean(rs4)
+mrs34 <- mean(rs34)
+mrs334 <- mean(rs334)
+```
+
+```{r}
+    r.vals <- raster::extract(mrs4, agg_poly)
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    agg_poly@data <- data.frame(agg_poly@data, red_col_4=unlist(r.mean))
+
+    df.mrs4 = st_as_sf(agg_poly) 
+    
+    
+        r.vals <- raster::extract(mrs34, agg_poly)
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    agg_poly@data <- data.frame(agg_poly@data, red_col_34=unlist(r.mean))
+
+    df.mrs34 = st_as_sf(agg_poly) 
+    
+    r.vals <- raster::extract(mrs334, agg_poly)
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    agg_poly@data <- data.frame(agg_poly@data, red_col_334=unlist(r.mean))
+
+    df.mrs334  = st_as_sf(agg_poly) 
+```
+
+
+```{r}
+
+pdf(file = "Jupiter_Example/raw.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 6) # The height of the plot in inches
+
+
+ggplot() +
+    # geom_sf(data = df, mapping =  aes(fill = red_col))+
+    geom_raster(data = r.int,  aes(x = x, y = y, fill = layer)) +
+  scale_fill_viridis_c(option = "H") +
+  xlab("")+ylab("")+
+  theme_classic()
+
+dev.off()
+
+pdf(file = "Jupiter_Example/spatial_average.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 6) # The height of the plot in inches
+
+ggplot()+
+  geom_sf(data = df, mapping =  aes(fill = red_col))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+
+dev.off()
+
+
+pdf(file = "Jupiter_Example/spatial_average_4stack.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 6) # The height of the plot in inches
+
+ggplot()+
+  geom_sf(data = df.mrs4, mapping =  aes(fill = red_col_4))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+dev.off()
+
+pdf(file = "Jupiter_Example/spatial_average_34stack.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 6) # The height of the plot in inches
+ggplot()+
+  geom_sf(data = df.mrs334, mapping =  aes(fill = red_col_34))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+dev.off()
+
+pdf(file = "Jupiter_Example/spatial_average_334stack.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 6) # The height of the plot in inches
+ggplot()+
+  geom_sf(data = df.mrs334, mapping =  aes(fill = red_col_334))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+dev.off()
+```
+
+```{r}
+ggplot() +
+    geom_raster(data = r.int,  aes(x = x, y = y, fill = log(layer))) +
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+
+ggplot()+
+  geom_sf(data = df, mapping =  aes(color = NULL, fill = log(red_col)))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+
+ggplot()+
+  geom_sf(data = df.mrs4, mapping =  aes(color = NULL, fill = log(red_col_4)))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+
+ggplot()+
+  geom_sf(data = df.mrs334, mapping =  aes(color = NULL, fill = log(red_col_34)))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+
+ggplot()+
+  geom_sf(data = df.mrs334, mapping =  aes(color = NULL, fill = log(red_col_334)))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+```
+

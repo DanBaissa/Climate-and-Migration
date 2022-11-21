@@ -1,0 +1,120 @@
+---
+title: "Syria Night Lights"
+author: "Daniel K Baissa"
+date: "2022-11-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(raster)
+library(tidyverse)
+library(sf)
+```
+
+```{r}
+Syria <- st_read("Shapefiles/syr_admbnda_adm0_uncs_unocha_20201217.shp")
+e <- as(extent(Syria), 'SpatialPolygons')
+crs(e) <- "+proj=longlat +datum=WGS84 +no_defs"
+```
+
+
+
+
+# Now let's automate this
+
+First I need to get R to read all of the rasters and then I will loop the above raster means thing.
+
+```{r}
+filenames <- list.files("Monthly_DMSP-OLS", pattern=".glare2.line_screened.avg_vis.tif", full.names=TRUE)
+# filenames <- list.files("Monthly_DMSP-OLS", pattern="cloud2.light1.marginal0.glare2.line_screened.avg_vis.tif", full.names=TRUE)
+
+```
+
+```{r}
+r <- raster(filenames[1])
+r <- crop(r, e)
+```
+
+```{r}
+ppside <- 100
+h <- ceiling(ncol(r)/ppside)
+v <- ceiling(nrow(r)/ppside)
+agg <- aggregate(r,fact=c(h,v))
+agg[]    <- 1:ncell(agg)
+agg_poly <- rasterToPolygons(agg)
+plot(agg_poly)
+```
+
+```{r}
+    r.vals <- raster::extract(r, agg_poly)
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    agg_poly@data <- data.frame(agg_poly@data, NL_month_1=unlist(r.mean))
+    
+```
+
+```{r}
+for (i in 2:length(filenames)) {
+  # for (i in 2:3) {
+
+  r <- raster(filenames[i])
+  r <- crop(r, e)
+      r.vals <- raster::extract(r, agg_poly)
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    agg_poly@data <- cbind(agg_poly@data, i = unlist(r.mean))
+    
+    
+    print(paste(i, "of", length(filenames)))
+  }
+agg_poly = st_as_sf(agg_poly)     
+df <- st_intersection(agg_poly, Syria)
+
+try(st_delete("syria.shp"))
+st_write(df, "syria.shp", dataset_options = "OVERWRITE=T")
+
+```
+
+```{r}
+ggplot()+
+  geom_sf(data = df, mapping =  aes(color = NULL, fill = log(i)))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+```
+
+
+
+```{r}
+ggplot()+
+  geom_sf(data = df, mapping =  aes(color = NULL, fill = log(NL_month_1)))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+
+ggplot()+
+  geom_sf(data = df, mapping =  aes(color = NULL, fill = log(i.21)))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+df %>% 
+  mutate(change = log(i.21)-log(NL_month_1)) %>% 
+  mutate(Neg = ifelse(change < 0, change,0)) %>% 
+ggplot()+
+  geom_sf( mapping =  aes(color = NULL, fill = Neg))+
+  scale_fill_viridis_c(option = "H") +
+  theme_classic()
+```
+
+```{r}
+
+# filenames <- list.files("Monthly_DMSP-OLS", pattern=".glare2.line_screened.avg_vis.tif", full.names=TRUE)
+# 
+# r <- raster(filenames[10])
+# plot(r)
+```
+
+```{r}
+filenames[23]
+```
+

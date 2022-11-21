@@ -1,0 +1,362 @@
+---
+title: "Noise"
+author: "Daniel K Baissa"
+date: "2022-11-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(raster)
+library(sf)
+```
+
+## Does my new idea fight noise?
+
+Let's find out. Let's start by creating a raster where we know the answers. Then we will randomly add some noise.
+
+
+```{r}
+r <- raster(ncol=100, nrow=100)
+ncell(r)
+hasValues(r)
+set.seed(0)
+# v <- c(rep(.4, ncell(r)/2),rep(.2, ncell(r)/2))
+vals <- rpois(ncell(r), 2)
+# v <- abs(rnorm(ncell(r)))
+vals<- vals/max(vals)  
+values(r)<- vals
+# hasValues(r)
+# inMemory(r)
+# values(r)[1:10]
+pdf(file = "Noise_Example/Base_Data.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+plot(r, main= paste0('Data Simulated from Poison Distribution Lamda = 2'))
+dev.off()
+```
+
+```{r}
+ppside <- 50
+
+h <- ceiling(ncol(r)/ppside)
+v <- ceiling(nrow(r)/ppside)
+
+agg <- aggregate(r,fact=c(h,v))
+agg[]    <- 1:ncell(agg)
+agg_poly <- rasterToPolygons(agg)
+
+plot(agg_poly)
+```
+
+Now let's see what the average of each area is
+
+```{r}
+base_grid <- agg_poly
+r.vals <- raster::extract(r, base_grid)
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    base_grid@data <- data.frame(base_grid@data, base=unlist(r.mean))
+    
+    base_grid = st_as_sf(base_grid)     
+
+```
+
+Now let's add noise to the raster. Let's assume that the noise is Gaussian with mean zero.
+
+```{r}
+
+r2 <- r + rnorm(ncell(r), 0,sd(vals))
+# r2 <- r + rnorm(ncell(r), 0,1)
+
+pdf(file = "Noise_Example/Noise_added.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+plot(r2-r)
+dev.off()
+
+```
+
+```{r}
+base_raster_diff <- r2-r
+base_raster_diff <- as.data.frame(base_raster_diff)
+
+pdf(file = "Noise_Example/Base_Difference.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+
+base_raster_diff |> 
+  ggplot()+
+  geom_density(mapping =  aes(x = layer, y = ..density..)) +
+  geom_vline(xintercept = mean(base_raster_diff$layer), colour="red")+
+  geom_vline(xintercept = c(sd(base_raster_diff$layer), -1*sd(base_raster_diff$layer)), colour="red", linetype = "longdash")+
+    geom_vline(xintercept = c(2*sd(base_raster_diff$layer), -2*sd(base_raster_diff$layer)), colour="green", linetype = "longdash")+
+  theme_classic()+
+  labs(title = "Difference Between True Raster and True Raster with Noise",
+    subtitle = paste("2 Standard Deviations = ", round(2*sd(base_raster_diff$layer), 3)))
+
+dev.off()
+```
+
+
+Now let's do something like a spatial mean filter
+
+```{r}
+test_grid <- agg_poly
+r.vals <- raster::extract(r2, test_grid)
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    test_grid@data <- data.frame(test_grid@data, test=unlist(r.mean))
+    
+    merged = st_as_sf(test_grid)     
+
+```
+
+```{r}
+merged <- cbind(base_grid, test = merged$test)
+```
+
+```{r}
+merged <- merged |> 
+  mutate(diff = base - test) |> 
+  mutate(prop_diff = diff/base) |> 
+  mutate(prop_diff_test = test/base)
+```
+
+```{r}
+ggplot()+
+  geom_sf(data = merged, mapping =  aes(color = NULL, fill = prop_diff))
+
+ggplot()+
+  geom_sf(data = merged, mapping =  aes(color = NULL, fill = prop_diff_test))
+```
+
+Now Let's look at the distribution
+
+```{r}
+pdf(file = "Noise_Example/Spatial_Mean_Difference.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+
+
+ggplot(data = merged)+
+  geom_density(mapping =  aes(x = diff, y = ..density..)) +
+  geom_vline(xintercept = mean(merged$diff), colour="red")+
+  geom_vline(xintercept = c(sd(merged$diff), -1*sd(merged$diff)), colour="red", linetype = "longdash")+
+    geom_vline(xintercept = c(2*sd(merged$diff), -2*sd(merged$diff)), colour="green", linetype = "longdash")+
+  theme_classic()+
+  labs(title = "Difference Between True Raster and Spatial Mean with Noise", subtitle = paste("2 Standard Deviations = ", round(2*sd(merged$diff), 3)))
+dev.off()
+```
+
+###
+
+So there is a nice improvement. Now let's stack them on top of this.
+
+```{r}
+r3 <- r + rnorm(ncell(r), 0,sd(vals))
+r4 <- r + rnorm(ncell(r), 0,sd(vals))
+r5 <- r + rnorm(ncell(r), 0,sd(vals))
+r6 <- r + rnorm(ncell(r), 0,sd(vals))
+r7 <- r + rnorm(ncell(r), 0,sd(vals))
+
+s <- stack(r3,r4,r5,r6,r7)
+
+s[[1,]]
+```
+
+```{r}
+for (i in 1:5) {
+  # r.vals <- raster::extract(paste0("r",i), test_grid)
+    r.vals <- raster::extract(s[[i,]], test_grid)
+
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    test_grid@data <- data.frame(test_grid@data, test=unlist(r.mean))
+    colnames(test_grid@data)[length(colnames(test_grid@data))] <- paste0("test", i)
+    
+}
+  test_grid = st_as_sf(test_grid)   
+```
+
+
+```{r}
+test_grid <- cbind(test_grid, base = merged$base)
+
+test_grid <- test_grid |> 
+  group_by(layer) |> 
+  mutate(mean_test = mean(c(test,test1,test2,test3,test4,test5))) |> 
+  mutate(stack_diff = (mean_test - base))
+         
+
+```
+
+
+```{r}
+ggplot()+
+  geom_sf(data = test_grid, mapping =  aes(color = NULL, fill = mean_test))
+
+ggplot()+
+  geom_sf(data = test_grid, mapping =  aes(color = NULL, fill = stack_diff))
+```
+
+```{r}
+pdf(file = "Noise_Example/Stacked_Spatial_Mean_Difference.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+
+
+ggplot(data = test_grid)+
+  geom_density(mapping =  aes(x = stack_diff, y = ..density..)) +
+  geom_vline(xintercept = mean(test_grid$stack_diff), colour="red")+
+  geom_vline(xintercept = c(sd(test_grid$stack_diff), -1*sd(test_grid$stack_diff)), colour="red", linetype = "longdash")+
+    geom_vline(xintercept = c(2*sd(test_grid$stack_diff), -2*sd(test_grid$stack_diff)), colour="green", linetype = "longdash")+
+  theme_classic()+
+  labs(title = "Difference Between True Raster and 6 Stacked Rasters \nwith Spatial Mean and Noise", subtitle = paste("2 Standard Deviations = ", round(2*sd(test_grid$stack_diff), 3)))
+
+dev.off()
+```
+
+
+
+```{r}
+pdf(file = "Noise_Example/Comparison_Difference.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+
+ggplot()+
+  geom_density(data = test_grid, mapping =  aes(x = stack_diff, y = ..density..) , fill = "red", alpha =.5) +
+  geom_density(data = merged, mapping =  aes(x = diff, y = ..density..),fill = "blue", alpha =.5) +
+  geom_density(data = base_raster_diff, mapping =  aes(x = layer, y = ..density..),fill = "green", alpha =.5) +
+  theme_classic()+
+  xlab("Error") + ylab("Density")
+dev.off()
+```
+
+```{r}
+t <- rbinom(10, 1,.25)
+t[which(t >0 )] <- rnorm(length(t[which(t >0 )]), 0,sd(vals))
+
+t
+```
+
+```{r}
+t <- rbinom(ncell(r), 1,.25)
+t[which(t >0 )] <- rnorm(length(t[which(t >0 )]), 0,sd(vals))
+
+rt1 <- r + t
+
+```
+
+```{r}
+base_raster_diff <-r- rt1
+base_raster_diff <- as.data.frame(base_raster_diff)
+
+base_raster_diff |> 
+  ggplot()+
+  geom_density(mapping =  aes(x = layer, y = ..density..)) +
+  geom_vline(xintercept = mean(base_raster_diff$layer), colour="red")+
+  geom_vline(xintercept = c(sd(base_raster_diff$layer), -1*sd(base_raster_diff$layer)), colour="red", linetype = "longdash")+
+    geom_vline(xintercept = c(2*sd(base_raster_diff$layer), -2*sd(base_raster_diff$layer)), colour="green", linetype = "longdash")+
+  theme_classic()+
+  labs(title = paste("2 Standard Deviations = ", round(2*sd(base_raster_diff$layer), 3)))
+```
+```{r}
+ppside <- 50
+
+h <- ceiling(ncol(r)/ppside)
+v <- ceiling(nrow(r)/ppside)
+
+agg <- aggregate(r,fact=c(h,v))
+agg[]    <- 1:ncell(agg)
+agg_poly <- rasterToPolygons(agg)
+
+plot(agg_poly)
+```
+
+```{r}
+test_grid <- agg_poly
+r.vals <- raster::extract(rt1, test_grid)
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    test_grid@data <- data.frame(test_grid@data, test.rand=unlist(r.mean))
+    
+    test_grid = st_as_sf(test_grid)  
+
+merged <- cbind(merged, test_grid)
+merged <- merged |> 
+  mutate(diff = base - test.rand) 
+    
+ggplot(data = merged)+
+  geom_density(mapping =  aes(x = diff, y = ..density..)) +
+  geom_vline(xintercept = mean(merged$diff), colour="red")+
+  geom_vline(xintercept = c(sd(merged$diff), -1*sd(merged$diff)), colour="red", linetype = "longdash")+
+    geom_vline(xintercept = c(2*sd(merged$diff), -2*sd(merged$diff)), colour="green", linetype = "longdash")+
+  theme_classic()+
+  labs(title = paste("2 Standard Deviations = ", round(2*sd(merged$diff), 3)))
+```
+
+```{r}
+
+t <- rbinom(ncell(r), 1,.25)
+t[which(t >0 )] <- rnorm(length(t[which(t >0 )]), 0,sd(vals))
+
+rt3 <- r + t
+
+t <- rbinom(ncell(r), 1,.25)
+t[which(t >0 )] <- rnorm(length(t[which(t >0 )]), 0,sd(vals))
+
+rt4 <- r + t
+t <- rbinom(ncell(r), 1,.25)
+t[which(t >0 )] <- rnorm(length(t[which(t >0 )]), 0,sd(vals))
+
+rt5 <- r + t
+t <- rbinom(ncell(r), 1,.25)
+t[which(t >0 )] <- rnorm(length(t[which(t >0 )]), 0,sd(vals))
+
+rt6 <- r + t
+s <- stack(rt1, rt3,rt4,rt5,rt6)
+
+s[[1,]]
+```
+
+```{r}
+test_grid <- agg_poly
+for (i in 1:5) {
+  # r.vals <- raster::extract(paste0("r",i), test_grid)
+    r.vals <- raster::extract(s[[i,]], test_grid)
+
+    # Use list apply to calculate mean for each polygon
+    r.mean <- lapply(r.vals, FUN=mean, na.rm = T)
+    # Join mean values to polygon data
+    test_grid@data <- data.frame(test_grid@data, test=unlist(r.mean))
+    colnames(test_grid@data)[length(colnames(test_grid@data))] <- paste0("test.rand", i)
+    
+}
+  test_grid = st_as_sf(test_grid)  
+  
+  test_grid <- cbind(test_grid, merged$base)
+
+```
+
+```{r}
+test_grid <- test_grid |> 
+  group_by(layer) |> 
+  mutate(mean_test = mean(c(test.rand1,test.rand2,test.rand3,test.rand4,test.rand5))) |> 
+  mutate(stack_diff = (mean_test - merged.base))
+
+ggplot(data = test_grid)+
+  geom_density(mapping =  aes(x = stack_diff, y = ..density..)) +
+  geom_vline(xintercept = mean(test_grid$stack_diff), colour="red")+
+  geom_vline(xintercept = c(sd(test_grid$stack_diff), -1*sd(test_grid$stack_diff)), colour="red", linetype = "longdash")+
+    geom_vline(xintercept = c(2*sd(test_grid$stack_diff), -2*sd(test_grid$stack_diff)), colour="green", linetype = "longdash")+
+  theme_classic()+
+  labs(title = paste("2 Standard Deviations = ", round(2*sd(test_grid$stack_diff), 3)))
+```
+
