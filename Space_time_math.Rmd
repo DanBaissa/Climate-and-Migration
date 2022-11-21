@@ -11,12 +11,25 @@ knitr::opts_chunk$set(echo = TRUE)
 library(raster)
 library(tidyverse)
 library(sf)
+library(sjPlot)
+library(MASS)
+
+
 ```
 
 
 ```{r}
 Syria <- st_read("merged_albedo_NL_Urban/syria_Merged_50.shp")
 st_crs(Syria) <- "+proj=longlat +datum=WGS84 +no_defs"
+
+
+Syria_coords <- 
+  Syria |> 
+  st_centroid() |> 
+  st_coordinates() |> 
+  as.data.frame()
+
+Syria <- cbind(Syria, Syria_coords)
 
 ```
 
@@ -37,6 +50,100 @@ Syria %>%
   theme_classic()
 ```
 
+
+
+```{r}
+
+m1.lm <- lm(NL ~ Urban * Albedo, data = Syria)
+summary(m1.lm)
+plot_model(m1.lm, type = "pred", terms = c("Albedo", "Urban"))
+library(equatiomatic)
+extract_eq(m1.lm)
+```
+
+```{r}
+library(sjmisc)
+library(modelsummary)
+# Syria$Drought <- to_factor(Syria$Drought)
+# Syria$Urban <- to_factor(Syria$Urban)
+
+Syria2 <- Syria |> 
+  mutate(Urban = ifelse(Urban == 1, "Urban", "Rural"),
+         Drought = ifelse(Drought == 0, "Before Drought", "Drought"))
+
+m2.lm <- lm(NL ~ Albedo + Urban * Drought + Month + Year + X + Y, data = Syria2)
+summary(m2.lm)
+
+hist(resid(m2.lm))
+
+plot_model(m2.lm, type = "pred", terms = c("Drought", "Urban "), ci.lvl = .99,  vcov.fun = "HC3")
+
+m2.rlm <- rlm(NL ~  Albedo + Urban * Drought + Month + Year + X + Y, data = Syria2, method = "MM")
+
+
+summary(m2.rlm)
+plot_model(m2.rlm, type = "pred", terms = c("Drought", "Urban "),  ci.lvl = .99)
+
+```
+
+
+```{r}
+a <- Syria |> 
+  drop_na() |> 
+  slice_sample(weight_by = Urban, n = 2000)
+
+b <- Syria |> 
+  drop_na() |> 
+  slice_sample(weight_by = !Urban, n = 2000)
+
+Syria_sample = rbind(a,b)
+sum(Syria_sample$Urban)/nrow(Syria_sample)
+
+Syria_sample <- Syria_sample |> 
+  mutate(Urban = ifelse(Urban == 1, "Urban", "Rural"),
+         Drought = ifelse(Drought == 0, "Before Drought", "Drought"),
+         Year_F = as.factor(Year))
+
+Syria_sample$Drought <-  factor(Syria_sample$Drought, levels= c("Before Drought", "Drought"))
+
+```
+
+
+```{r}
+m3.lm <- lm(NL ~ Urban * Drought, data = Syria_sample)
+summary(m3.lm)
+plot_model(m3.lm, type = "pred", terms = c("Drought", "Urban "),  vcov.fun = "HC3")
+```
+
+
+```{r}
+m4.lm <- lm(NL ~ Urban *  Albedo, data = Syria_sample)
+summary(m4.lm)
+plot_model(m4.lm, type = "pred", terms = c("Albedo", "Urban "),  vcov.fun = "HC3")
+```
+
+
+```{r}
+m5.lm <- lm(NL ~  Albedo + Urban * Drought + Month + Year_F + X + Y, data = Syria_sample)
+
+plot_model(m5.lm, type = "pred", terms = c("Drought", "Urban "), robust = T, ci.lvl = .99,  vcov.fun = "HC3")
+plot_model(m5.lm, type = "pred", terms = c("Drought", "Urban "), robust = T,  vcov.fun = "HC3")
+plot_model(m5.lm, type = "pred", terms = c("Drought", "Urban "), robust = T,  vcov.fun = "hetero")
+
+hist(resid(m5.lm))
+# shapiro.test(resid(m5.lm))
+
+m5.rlm <- rlm(NL ~  Albedo + Urban * Drought + Month + Year + X + Y, data = Syria_sample, method = "MM")
+summary(m5.lm)
+summary(m5.rlm)
+
+plot_model(m5.rlm, type = "pred", terms = c("Drought", "Urban "),  ci.lvl = .99)
+```
+
+
+
+
+
 ```{r}
 Syria2 <- Syria %>% 
   drop_na()
@@ -44,33 +151,46 @@ Syria2 <- Syria %>%
 
 
 ```{r}
-m1.lm <- lm(NL~Urban*Drought+ Albedo + Month + as.factor(Year), data = Syria2)
-m1.lm <- lm(NL~Urban + Drought * Albedo + Month + as.factor(Year), data = Syria2)
+Syria_R <-Syria2 |> 
+  filter(Urban == 0) |> 
+  group_by(Urban, Time) |> 
+  mutate(Rural_Albedo = mean(Albedo))
+```
 
-# m1.lm <- lm(NL~Urban*Drought+ Albedo + Month + as.factor(Year) + as.factor(G_BRDF_), data = Syria)
+```{r}
+m1.lm <- lm(NL~Urban + Rural_Albedo*Drought + Month + as.factor(Year), data = Syria_R)
 
 summary(m1.lm)
 
-# test <- lm(NL~Urban*Albedo*Drought, data = Syria)
-# summary(test)
-# sjPlot::plot_model(test, type = "pred", terms =c("Urban", "Drought"))
+hist(resid(m1.lm))
 ```
-
-
 ```{r}
-Syria2 <- Syria2 %>%
-  drop_na() %>% 
-  mutate(olsresid = resid(m1.lm))
+m1.lm <- lm(NL~Urban + Drought * Albedo + Month + as.factor(Year), data = Syria2)
+
+summary(m1.lm)
+
+hist(resid(m1.lm))
+
 ```
+
 
 ```{r}
 library(spdep)
 library(spatialreg)
 
-Syria3  <- Syria2 %>%
-  sample_n(1000, replace = T)
+# set.seed(01780)
+# 
+# Syria3  <- Syria |> 
+#   drop_na() |> 
+#   slice_sample(n = 1500)
 
-sample.m1.lm <- lm(NL~Urban + Drought * Albedo + Month + as.factor(Year), data = Syria3)
+# set.seed(01780)
+
+Syria3  <- Syria |> 
+  drop_na() |> 
+  slice_sample(n = 10000)
+
+sample.m1.lm <- lm(NL~Urban * Drought + Albedo + Month + as.factor(Year), data = Syria3)
 
 Syria3 <- Syria3 %>%
   mutate(olsresid = resid(sample.m1.lm))
@@ -81,13 +201,18 @@ summary(sample.m1.lm)
 
 
 seab<-poly2nb(Syria3, queen=T)
-seaw<-nb2listw(seab, style="W", zero.policy = TRUE)
+seaw <-nb2listw(seab, style="W", zero.policy = T)
+
+moran.plot(Syria3$NL, listw=seaw)
 
 # test <- lm(NL~Urban*Albedo, data = df4)
 
 
 
-fit.err<-errorsarlm(NL~Urban + Drought * Albedo + Month + as.factor(Year), data = Syria3, listw = seaw) 
+fit.lag<-lagsarlm(NL ~ Urban * Drought + Albedo + Month + as.factor(Year), data = Syria3, listw = seaw)
+summary(fit.lag)
+
+fit.err<-errorsarlm(NL ~ Urban * Drought + Albedo + Month + as.factor(Year), data = Syria3, listw = seaw) 
 summary(fit.err)
 ```
 
@@ -99,6 +224,9 @@ m2.lm <- lm(NL~Urban*Drought+ Albedo + Month + as.factor(Year) + as.factor(G_BRD
 summary(m2.lm)
 
 m2.lm$coefficients["Urban:Drought"]
+
+hist(resid(m2.lm))
+
 
 
 ```
